@@ -1,0 +1,95 @@
+name: Android CI & APK Build
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Test Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Create Dummy / Dev Keystores
+        run: |
+          # Ensure debug.keystore exists for builds
+          if [ ! -f debug.keystore ]; then
+            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+          # Setup Release Keystore: from secret if provided, else generate build keystore
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > my-upload-key.jks
+          else
+            echo "Generating build signing key for release artifact..."
+            keytool -genkey -v -keystore my-upload-key.jks -storepass "${{ secrets.STORE_PASSWORD || 'sovereign_store_pass' }}" -alias "upload" -keypass "${{ secrets.KEY_PASSWORD || 'sovereign_store_pass' }}" -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Sovereign,OU=Mobile,O=AIStudio,L=London,C=GB"
+          fi
+
+      - name: Make Gradle Wrapper Executable
+        run: |
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+          else
+            gradle wrapper
+            chmod +x gradlew
+          fi
+
+      - name: Run Unit Tests
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'sovereign_store_pass' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'sovereign_store_pass' }}
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Build Debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Build Release APK
+        env:
+          KEYSTORE_PATH: my-upload-key.jks
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'sovereign_store_pass' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'sovereign_store_pass' }}
+        run: ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Build Release App Bundle (AAB for Google Play)
+        env:
+          KEYSTORE_PATH: my-upload-key.jks
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'sovereign_store_pass' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'sovereign_store_pass' }}
+        run: ./gradlew :app:bundleRelease --no-daemon || true
+
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sovereign-Debug-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: warn
+
+      - name: Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sovereign-Release-APK
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: warn
+
+      - name: Upload Release AAB Bundle Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sovereign-Release-Bundle
+          path: app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: ignore

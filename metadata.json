@@ -1,0 +1,6 @@
+{
+  "name": "Sovereign",
+  "description": "Agentic country and life simulator driven by an on-device AI game master referee.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
